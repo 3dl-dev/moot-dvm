@@ -1,0 +1,48 @@
+name: publish moot feeds
+
+# Thin scheduler: the code lives in 3dl-dev/moot; this repo only holds the cron
+# and the signing secret. Publishes discussion-hot ranked feeds (hot/top/rising/
+# controversial) as NIP-90 kind:6300 results + a NIP-89 announcement, every 15
+# min. See moot/docs/dvm-feed.md.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+# Never overlap runs (would corrupt the rising snapshot / double-publish).
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out moot (the algorithm lives there)
+        uses: actions/checkout@v4
+        with:
+          repository: 3dl-dev/moot
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - run: npm ci
+
+      # Carry the rising snapshot between runs so velocity is REAL Δengagement/h,
+      # not the cold-start approximation. Unique key saves each run; restore-keys
+      # fetches the most recent prior snapshot.
+      - name: Restore rising snapshot
+        uses: actions/cache@v4
+        with:
+          path: rising-snapshot.json
+          key: rising-snapshot-${{ github.run_id }}
+          restore-keys: rising-snapshot-
+
+      - name: Build + publish feeds
+        env:
+          NOSTR_NSEC: ${{ secrets.NOSTR_NSEC }}
+          SNAPSHOT_FILE: rising-snapshot.json
+        run: node scripts/dvm-publish.ts
